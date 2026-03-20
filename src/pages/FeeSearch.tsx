@@ -34,11 +34,9 @@ const App: React.FC = () => {
     const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
     const [lastUpdated, setLastUpdated] = useState<string>('');
 
-    // [핵심 방어막] React StrictMode의 중복 실행을 막기 위한 장치
     const isFirstRun = useRef(true);
 
     useEffect(() => {
-        // 이미 한 번 실행되었다면 두 번째 실행(React 테스트)은 강제 종료
         if (!isFirstRun.current) return;
         isFirstRun.current = false;
 
@@ -54,57 +52,84 @@ const App: React.FC = () => {
 
                 const files = ['/fee_master_1.csv', '/fee_master_2.csv', '/fee_master_3.csv'];
                 let allValidFees: FeeRecord[] = [];
-                let headerStr = "";
+                let headerMap: { [key: string]: number } = {};
 
                 for (let i = 0; i < files.length; i++) {
-                    setProgressLogs(prev => [...prev, `심평원 수가 마스터 ${i + 1} 다운로드 및 해석 중...`]);
+                    setProgressLogs(prev => [...prev, `심평원 수가 마스터 ${i + 1} 스트리밍 연동 중... (메모리 최적화)`]);
 
-                    await new Promise(resolve => setTimeout(resolve, 200));
-
-                    const res = await fetch(files[i]);
-                    if (!res.ok) throw new Error(`${files[i]} 로드 실패`);
-
+                    // 1번 파일에서만 업데이트 날짜 추출
                     if (i === 0) {
-                        const lastMod = res.headers.get('Last-Modified');
-                        if (lastMod) {
-                            const date = new Date(lastMod);
-                            setLastUpdated(date.toLocaleString('ko-KR', {
-                                year: 'numeric', month: '2-digit', day: '2-digit',
-                                hour: '2-digit', minute: '2-digit', hour12: false
-                            }));
-                        } else {
-                            setLastUpdated('최신 데이터 반영 완료');
-                        }
-                    }
-
-                    const text = await res.text();
-                    let textToParse = text;
-
-                    if (i === 0) {
-                        headerStr = text.substring(0, text.indexOf('\n'));
-                    } else {
-                        textToParse = headerStr + "\n" + text;
-                    }
-
-                    let validFees: FeeRecord[] = [];
-
-                    Papa.parse(textToParse, {
-                        header: true,
-                        skipEmptyLines: true,
-                        step: function (results) {
-                            const item = results.data as any;
-                            const code = item['수가코드']?.trim() || '';
-                            if (code !== '' && code.length === 5) {
-                                validFees.push({
-                                    출처: '심평원 수가마스터 원본',
-                                    분류번호: item['분류번호']?.trim() || '',
-                                    코드: code,
-                                    분류: item['한글명']?.trim() || '',
-                                    점수: item['상대가치점수'] ? `${item['상대가치점수']}점 (의원단가: ${item['의원단가'] || '0'}원)` : '',
-                                    재료대: ''
-                                });
+                        try {
+                            const res = await fetch(files[i], { method: 'HEAD' });
+                            const lastMod = res.headers.get('Last-Modified');
+                            if (lastMod) {
+                                const date = new Date(lastMod);
+                                setLastUpdated(date.toLocaleString('ko-KR', {
+                                    year: 'numeric', month: '2-digit', day: '2-digit',
+                                    hour: '2-digit', minute: '2-digit', hour12: false
+                                }));
+                            } else {
+                                setLastUpdated('최신 데이터 반영 완료');
                             }
-                        }
+                        } catch (e) { }
+                    }
+
+                    // [무적의 스트리밍 파싱] 브라우저 메모리에 올리지 않고 네트워크에서 즉시 쪼개서 읽음
+                    const validFees = await new Promise<FeeRecord[]>((resolve, reject) => {
+                        let localValidFees: FeeRecord[] = [];
+
+                        Papa.parse(files[i], {
+                            download: true,      // 파일 전체를 다운받지 않고 스트리밍 방식으로 읽음
+                            header: false,       // 2, 3번 파일의 헤더 부재를 해결하기 위해 수동 매핑 적용
+                            skipEmptyLines: true,
+                            chunk: function (results) {
+                                const rows = results.data as string[][];
+                                let startIndex = 0;
+
+                                // 첫 번째 파일의 첫 번째 줄에서 컬럼 위치(인덱스)를 완벽히 기억함
+                                if (i === 0 && Object.keys(headerMap).length === 0) {
+                                    const headers = rows[0];
+                                    headers.forEach((h, idx) => {
+                                        headerMap[h.trim()] = idx;
+                                    });
+                                    startIndex = 1; // 헤더 줄은 데이터에서 제외
+                                }
+
+                                const codeIdx = headerMap['수가코드'];
+                                const classIdx = headerMap['분류번호'];
+                                const nameIdx = headerMap['한글명'];
+                                const scoreIdx = headerMap['상대가치점수'];
+                                const priceIdx = headerMap['의원단가'];
+
+                                if (codeIdx === undefined) return;
+
+                                const validChunk: FeeRecord[] = [];
+                                for (let j = startIndex; j < rows.length; j++) {
+                                    const row = rows[j];
+                                    if (!row || row.length <= codeIdx) continue;
+
+                                    const code = (row[codeIdx] || '').trim();
+                                    // 5자리 순수 코드만 알짜배기로 추출
+                                    if (code.length === 5) {
+                                        validChunk.push({
+                                            출처: '심평원 수가마스터 원본',
+                                            분류번호: (row[classIdx] || '').trim(),
+                                            코드: code,
+                                            분류: (row[nameIdx] || '').trim(),
+                                            점수: row[scoreIdx] ? `${row[scoreIdx]}점 (의원단가: ${row[priceIdx] || '0'}원)` : '',
+                                            재료대: ''
+                                        });
+                                    }
+                                }
+                                localValidFees = [...localValidFees, ...validChunk];
+                            },
+                            complete: function () {
+                                resolve(localValidFees);
+                            },
+                            error: function (err) {
+                                reject(err);
+                            }
+                        });
                     });
 
                     allValidFees = [...allValidFees, ...validFees];

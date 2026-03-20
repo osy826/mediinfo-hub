@@ -44,7 +44,6 @@ const App: React.FC = () => {
                     setGuideData(jsonData);
                 }
 
-                // 3단 분할된 UTF-8 마스터 파일 로딩
                 const files = ['/fee_master_1.csv', '/fee_master_2.csv', '/fee_master_3.csv'];
                 const responses = await Promise.all(
                     files.map(file => fetch(file).then(res => {
@@ -65,14 +64,19 @@ const App: React.FC = () => {
                 }
 
                 const texts = await Promise.all(responses.map(res => res.text()));
-                const combinedCsv = texts[0] +
-                    "\n" + texts[1].split("\n").slice(1).join("\n") +
-                    "\n" + texts[2].split("\n").slice(1).join("\n");
 
-                const parsedFee = Papa.parse(combinedCsv, { header: true, skipEmptyLines: true }).data as any[];
+                // [메모리 과부하 해결 로직] 무거운 문자열 조작 대신 가벼운 결합 수행
+                const headerLine = texts[0].substring(0, texts[0].indexOf('\n')); // 첫 파일에서 제목줄 추출
 
-                // 원장님의 오리지널 5자리 코드 필터링 로직
-                const masterFees: FeeRecord[] = parsedFee.map(item => {
+                const parsed0 = Papa.parse(texts[0], { header: true, skipEmptyLines: true }).data as any[];
+                const parsed1 = Papa.parse(headerLine + "\n" + texts[1], { header: true, skipEmptyLines: true }).data as any[];
+                const parsed2 = Papa.parse(headerLine + "\n" + texts[2], { header: true, skipEmptyLines: true }).data as any[];
+
+                // 개별 파싱된 객체 배열들을 가볍게 병합
+                const combinedParsedFee = [...parsed0, ...parsed1, ...parsed2];
+
+                // 5자리 순수 코드 필터링
+                const masterFees: FeeRecord[] = combinedParsedFee.map(item => {
                     const code = item['수가코드']?.trim() || '';
                     return {
                         출처: '심평원 수가마스터 원본',
@@ -90,11 +94,15 @@ const App: React.FC = () => {
 
             } catch (error: any) {
                 console.error("데이터 로딩 오류:", error);
-                setStatusMsg(`❌ 데이터 로딩 실패. public 폴더에 분할된 csv 파일이 있는지 확인하십시오.`);
+                setStatusMsg(`❌ 데이터 로딩 실패. 네트워크 상태나 파일을 확인하십시오.`);
                 setIsLoading(false);
             }
         };
-        loadAllData();
+
+        // setTimeout을 통해 렌더링 후 비동기로 실행되게 하여 화면 멈춤 방지
+        setTimeout(() => {
+            loadAllData();
+        }, 100);
     }, []);
 
     const handleSearch = () => {

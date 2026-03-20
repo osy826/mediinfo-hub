@@ -1,0 +1,6 @@
+# 배포에 불필요하거나 너무 큰 파일들 제외
+node_modules/
+dist/
+crawler/
+public/fee_master.csv
+.env

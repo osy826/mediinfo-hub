@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Papa from 'papaparse';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Copy, Printer } from 'lucide-react';
@@ -34,7 +34,14 @@ const App: React.FC = () => {
     const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
     const [lastUpdated, setLastUpdated] = useState<string>('');
 
+    // [핵심 방어막] React StrictMode의 중복 실행을 막기 위한 장치
+    const isFirstRun = useRef(true);
+
     useEffect(() => {
+        // 이미 한 번 실행되었다면 두 번째 실행(React 테스트)은 강제 종료
+        if (!isFirstRun.current) return;
+        isFirstRun.current = false;
+
         const loadAllData = async () => {
             try {
                 setProgressLogs(['산정지침 데이터 확인 중...']);
@@ -52,7 +59,6 @@ const App: React.FC = () => {
                 for (let i = 0; i < files.length; i++) {
                     setProgressLogs(prev => [...prev, `심평원 수가 마스터 ${i + 1} 다운로드 및 해석 중...`]);
 
-                    // [핵심] 브라우저가 화면을 그릴 수 있도록 강제로 0.2초 숨통을 트여줌 (응답 없음 방지)
                     await new Promise(resolve => setTimeout(resolve, 200));
 
                     const res = await fetch(files[i]);
@@ -82,7 +88,6 @@ const App: React.FC = () => {
 
                     let validFees: FeeRecord[] = [];
 
-                    // [초극강 최적화] 거대한 배열을 만들지 않고, 한 줄씩 읽고 즉시 버리는 step 방식 도입
                     Papa.parse(textToParse, {
                         header: true,
                         skipEmptyLines: true,

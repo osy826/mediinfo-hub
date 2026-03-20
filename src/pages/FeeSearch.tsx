@@ -29,7 +29,6 @@ const App: React.FC = () => {
     const [filteredFee, setFilteredFee] = useState<FeeRecord[]>([]);
     const [filteredGuide, setFilteredGuide] = useState<GuideRecord[]>([]);
 
-    // [변경점] 진행 상황을 배열로 관리하여 실시간 중계
     const [progressLogs, setProgressLogs] = useState<string[]>(['데이터베이스 연동 준비 중...']);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
@@ -38,7 +37,6 @@ const App: React.FC = () => {
     useEffect(() => {
         const loadAllData = async () => {
             try {
-                // 1. 산정지침 (JSON) 로딩
                 setProgressLogs(['산정지침 데이터 확인 중...']);
                 const jsonRes = await fetch('/통합_산정지침_구조화.json');
                 let jsonData: GuideRecord[] = [];
@@ -47,19 +45,19 @@ const App: React.FC = () => {
                     setGuideData(jsonData);
                 }
 
-                // 2. 수가 마스터 분할 파일 순차 로딩 (원장님 제안 로직 적용)
                 const files = ['/fee_master_1.csv', '/fee_master_2.csv', '/fee_master_3.csv'];
                 let allValidFees: FeeRecord[] = [];
-                let headerStr = ""; // 첫 파일의 제목줄을 저장할 변수
+                let headerStr = "";
 
-                // 하나씩 순차적으로(await) 처리하여 메모리 폭발을 방지
                 for (let i = 0; i < files.length; i++) {
                     setProgressLogs(prev => [...prev, `심평원 수가 마스터 ${i + 1} 다운로드 및 해석 중...`]);
+
+                    // [핵심] 브라우저가 화면을 그릴 수 있도록 강제로 0.2초 숨통을 트여줌 (응답 없음 방지)
+                    await new Promise(resolve => setTimeout(resolve, 200));
 
                     const res = await fetch(files[i]);
                     if (!res.ok) throw new Error(`${files[i]} 로드 실패`);
 
-                    // 첫 번째 파일에서 최종 업데이트 날짜 추출
                     if (i === 0) {
                         const lastMod = res.headers.get('Last-Modified');
                         if (lastMod) {
@@ -76,33 +74,36 @@ const App: React.FC = () => {
                     const text = await res.text();
                     let textToParse = text;
 
-                    // [핵심] 분할로 인해 날아간 헤더 복구
                     if (i === 0) {
-                        headerStr = text.substring(0, text.indexOf('\n')); // 첫 줄(헤더) 저장
+                        headerStr = text.substring(0, text.indexOf('\n'));
                     } else {
-                        textToParse = headerStr + "\n" + text; // 2, 3번째 파일은 헤더를 붙여서 해석
+                        textToParse = headerStr + "\n" + text;
                     }
 
-                    // 파싱 수행
-                    const parsed = Papa.parse(textToParse, { header: true, skipEmptyLines: true }).data as any[];
+                    let validFees: FeeRecord[] = [];
 
-                    // 5자리 순수 코드만 필터링 (가벼운 알짜배기 데이터만 추출)
-                    const validFees = parsed.map(item => {
-                        const code = item['수가코드']?.trim() || '';
-                        return {
-                            출처: '심평원 수가마스터 원본',
-                            분류번호: item['분류번호']?.trim() || '',
-                            코드: code,
-                            분류: item['한글명']?.trim() || '',
-                            점수: item['상대가치점수'] ? `${item['상대가치점수']}점 (의원단가: ${item['의원단가'] || '0'}원)` : '',
-                            재료대: ''
-                        };
-                    }).filter(item => item.코드 !== '' && item.코드.length === 5);
+                    // [초극강 최적화] 거대한 배열을 만들지 않고, 한 줄씩 읽고 즉시 버리는 step 방식 도입
+                    Papa.parse(textToParse, {
+                        header: true,
+                        skipEmptyLines: true,
+                        step: function (results) {
+                            const item = results.data as any;
+                            const code = item['수가코드']?.trim() || '';
+                            if (code !== '' && code.length === 5) {
+                                validFees.push({
+                                    출처: '심평원 수가마스터 원본',
+                                    분류번호: item['분류번호']?.trim() || '',
+                                    코드: code,
+                                    분류: item['한글명']?.trim() || '',
+                                    점수: item['상대가치점수'] ? `${item['상대가치점수']}점 (의원단가: ${item['의원단가'] || '0'}원)` : '',
+                                    재료대: ''
+                                });
+                            }
+                        }
+                    });
 
-                    // 누적 배열에 합치기
                     allValidFees = [...allValidFees, ...validFees];
 
-                    // 실시간 UI 업데이트: "심평원 수가 마스터 1 로딩완료 (xxxx건)"
                     setProgressLogs(prev => {
                         const newLogs = [...prev];
                         newLogs[newLogs.length - 1] = `✅ 심평원 수가 마스터 ${i + 1} 로딩완료 (${validFees.length}건)`;
@@ -110,7 +111,6 @@ const App: React.FC = () => {
                     });
                 }
 
-                // 최종 완료 처리
                 setFeeData(allValidFees);
                 setIsLoading(false);
 
@@ -121,7 +121,6 @@ const App: React.FC = () => {
             }
         };
 
-        // UI가 먼저 렌더링될 수 있도록 약간의 숨통을 트여줌
         setTimeout(() => {
             loadAllData();
         }, 100);
@@ -256,7 +255,6 @@ const App: React.FC = () => {
                         <li className="pl-1">결과는 복사 및 인쇄 가능합니다.</li>
                     </ol>
 
-                    {/* [변경점] 진행 상황 실시간 출력 UI */}
                     <div className="mt-4 pt-4 border-t border-blue-200 text-sm font-bold text-blue-700 bg-white p-4 rounded-sm shadow-sm">
                         {progressLogs.map((log, idx) => (
                             <div key={idx} className={`mb-1.5 ${log.includes('완료') ? 'text-green-600' : log.includes('실패') ? 'text-red-500' : 'text-blue-600 animate-pulse'}`}>

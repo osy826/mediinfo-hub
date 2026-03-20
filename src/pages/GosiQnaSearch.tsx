@@ -54,11 +54,11 @@ export default function GosiQnaSearch() {
 
             <main className="w-full max-w-5xl mx-auto p-6 flex-grow flex flex-col items-center mt-10">
                 <div className="text-center mb-10">
-                    <h1 className="text-4xl font-extrabold text-gray-900 mb-2 border-b-4 border-gray-900 inline-block pb-2">심평원 임상 지침 검색 엔진</h1>
+                    <h1 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-2 border-b-4 border-gray-900 inline-block pb-2">심평원 임상 지침 검색 엔진</h1>
                 </div>
 
-                <div className="w-full bg-[#f1f5f9] border border-blue-100 rounded-sm p-8 mb-10 text-left">
-                    <ol className="list-none text-slate-600 space-y-3 font-bold text-[16px] leading-relaxed">
+                <div className="w-full bg-[#f1f5f9] border border-blue-100 rounded-sm p-6 md:p-8 mb-10 text-left">
+                    <ol className="list-none text-slate-600 space-y-3 font-bold text-[15px] md:text-[16px] leading-relaxed break-keep">
                         <li>1. 건강보험심사평가원의 **요양급여기준 고시, 실무 질의응답(Q&A), 행정해석** 등을 검색합니다.</li>
                         <li>2. 다중 검색어(쉼표 또는 띄어쓰기)를 통한 상세 검색을 지원합니다. (예: 폐경, 호르몬)</li>
                         <li className="text-rose-500">3. 문서 누락으로 검색이 되지 않을 수 있으니, 필요 시 심평원 홈페이지를 확인하시기 바랍니다.</li>
@@ -67,30 +67,35 @@ export default function GosiQnaSearch() {
                 </div>
 
                 <div className="w-full mb-12">
-                    <div className="flex border-2 border-gray-800 rounded-sm overflow-hidden shadow-lg bg-white">
+                    <div className="flex border-2 border-gray-800 rounded-sm overflow-hidden shadow-lg bg-white h-[50px] md:h-[60px]">
                         <input
                             type="text"
-                            className="flex-grow px-6 py-4 text-xl font-bold focus:outline-none placeholder:text-gray-300"
-                            placeholder="검색어 입력 (예: 폐경, 호르몬, 골밀도검사)"
+                            // [수정 핵심] min-w-0을 추가하여 모바일 화면에서 버튼 영역 침범 방지
+                            className="flex-grow min-w-0 px-3 py-3 md:px-6 md:py-4 text-base md:text-xl font-bold focus:outline-none placeholder:text-gray-300"
+                            placeholder="검색어 입력 (예: 골밀도)"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                         />
-                        <button onClick={handleSearch} className="bg-black text-white px-10 py-4 flex items-center justify-center font-bold text-xl hover:bg-gray-800 transition-colors">
-                            검색 실행
+                        <button
+                            onClick={handleSearch}
+                            // [수정 핵심] shrink-0 whitespace-nowrap 추가로 버튼 찌그러짐 및 글자 줄바꿈 원천 차단
+                            className="bg-black text-white px-5 md:px-10 h-full flex items-center justify-center font-bold text-base md:text-xl hover:bg-gray-800 transition-colors shrink-0 whitespace-nowrap"
+                        >
+                            검색
                         </button>
                     </div>
                 </div>
 
                 <div className="w-full space-y-8 mb-20">
                     {results.map((item, idx) => (
-                        <div key={idx} className="bg-white p-8 border-2 border-gray-100 hover:border-gray-800 transition-all group shadow-sm">
+                        <div key={idx} className="bg-white p-6 md:p-8 border-2 border-gray-100 hover:border-gray-800 transition-all group shadow-sm">
                             <div className="flex justify-between items-center mb-4">
                                 <span className="text-xs font-black bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-sm border border-indigo-200 uppercase tracking-widest">{item.category || '지침'}</span>
                                 <span className="text-sm text-gray-400 font-bold">{item.posted_date || '날짜 미상'}</span>
                             </div>
-                            <h4 className="text-2xl font-black text-gray-900 mb-5 leading-tight group-hover:underline">{item.title}</h4>
-                            <div className="text-[17px] text-gray-700 leading-relaxed bg-gray-50 p-6 border border-gray-100 whitespace-pre-wrap mb-4 font-medium">
+                            <h4 className="text-xl md:text-2xl font-black text-gray-900 mb-5 leading-tight group-hover:underline break-keep">{item.title}</h4>
+                            <div className="text-[15px] md:text-[17px] text-gray-700 leading-relaxed bg-gray-50 p-4 md:p-6 border border-gray-100 whitespace-pre-wrap mb-4 font-medium break-words">
                                 {item.full_text}
                             </div>
                         </div>

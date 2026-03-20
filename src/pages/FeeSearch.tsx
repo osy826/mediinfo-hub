@@ -29,7 +29,8 @@ const App: React.FC = () => {
     const [filteredFee, setFilteredFee] = useState<FeeRecord[]>([]);
     const [filteredGuide, setFilteredGuide] = useState<GuideRecord[]>([]);
 
-    const [statusMsg, setStatusMsg] = useState<string>('심평원 마스터 데이터베이스 로딩 중...');
+    // [변경점] 진행 상황을 배열로 관리하여 실시간 중계
+    const [progressLogs, setProgressLogs] = useState<string[]>(['데이터베이스 연동 준비 중...']);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
     const [lastUpdated, setLastUpdated] = useState<string>('');
@@ -37,6 +38,8 @@ const App: React.FC = () => {
     useEffect(() => {
         const loadAllData = async () => {
             try {
+                // 1. 산정지침 (JSON) 로딩
+                setProgressLogs(['산정지침 데이터 확인 중...']);
                 const jsonRes = await fetch('/통합_산정지침_구조화.json');
                 let jsonData: GuideRecord[] = [];
                 if (jsonRes.ok) {
@@ -44,62 +47,81 @@ const App: React.FC = () => {
                     setGuideData(jsonData);
                 }
 
+                // 2. 수가 마스터 분할 파일 순차 로딩 (원장님 제안 로직 적용)
                 const files = ['/fee_master_1.csv', '/fee_master_2.csv', '/fee_master_3.csv'];
-                const responses = await Promise.all(
-                    files.map(file => fetch(file).then(res => {
-                        if (!res.ok) throw new Error(`${file} 로드 실패`);
-                        return res;
-                    }))
-                );
+                let allValidFees: FeeRecord[] = [];
+                let headerStr = ""; // 첫 파일의 제목줄을 저장할 변수
 
-                const lastMod = responses[0].headers.get('Last-Modified');
-                if (lastMod) {
-                    const date = new Date(lastMod);
-                    setLastUpdated(date.toLocaleString('ko-KR', {
-                        year: 'numeric', month: '2-digit', day: '2-digit',
-                        hour: '2-digit', minute: '2-digit', hour12: false
-                    }));
-                } else {
-                    setLastUpdated('최신 데이터 반영 완료');
+                // 하나씩 순차적으로(await) 처리하여 메모리 폭발을 방지
+                for (let i = 0; i < files.length; i++) {
+                    setProgressLogs(prev => [...prev, `심평원 수가 마스터 ${i + 1} 다운로드 및 해석 중...`]);
+
+                    const res = await fetch(files[i]);
+                    if (!res.ok) throw new Error(`${files[i]} 로드 실패`);
+
+                    // 첫 번째 파일에서 최종 업데이트 날짜 추출
+                    if (i === 0) {
+                        const lastMod = res.headers.get('Last-Modified');
+                        if (lastMod) {
+                            const date = new Date(lastMod);
+                            setLastUpdated(date.toLocaleString('ko-KR', {
+                                year: 'numeric', month: '2-digit', day: '2-digit',
+                                hour: '2-digit', minute: '2-digit', hour12: false
+                            }));
+                        } else {
+                            setLastUpdated('최신 데이터 반영 완료');
+                        }
+                    }
+
+                    const text = await res.text();
+                    let textToParse = text;
+
+                    // [핵심] 분할로 인해 날아간 헤더 복구
+                    if (i === 0) {
+                        headerStr = text.substring(0, text.indexOf('\n')); // 첫 줄(헤더) 저장
+                    } else {
+                        textToParse = headerStr + "\n" + text; // 2, 3번째 파일은 헤더를 붙여서 해석
+                    }
+
+                    // 파싱 수행
+                    const parsed = Papa.parse(textToParse, { header: true, skipEmptyLines: true }).data as any[];
+
+                    // 5자리 순수 코드만 필터링 (가벼운 알짜배기 데이터만 추출)
+                    const validFees = parsed.map(item => {
+                        const code = item['수가코드']?.trim() || '';
+                        return {
+                            출처: '심평원 수가마스터 원본',
+                            분류번호: item['분류번호']?.trim() || '',
+                            코드: code,
+                            분류: item['한글명']?.trim() || '',
+                            점수: item['상대가치점수'] ? `${item['상대가치점수']}점 (의원단가: ${item['의원단가'] || '0'}원)` : '',
+                            재료대: ''
+                        };
+                    }).filter(item => item.코드 !== '' && item.코드.length === 5);
+
+                    // 누적 배열에 합치기
+                    allValidFees = [...allValidFees, ...validFees];
+
+                    // 실시간 UI 업데이트: "심평원 수가 마스터 1 로딩완료 (xxxx건)"
+                    setProgressLogs(prev => {
+                        const newLogs = [...prev];
+                        newLogs[newLogs.length - 1] = `✅ 심평원 수가 마스터 ${i + 1} 로딩완료 (${validFees.length}건)`;
+                        return newLogs;
+                    });
                 }
 
-                const texts = await Promise.all(responses.map(res => res.text()));
-
-                // [메모리 과부하 해결 로직] 무거운 문자열 조작 대신 가벼운 결합 수행
-                const headerLine = texts[0].substring(0, texts[0].indexOf('\n')); // 첫 파일에서 제목줄 추출
-
-                const parsed0 = Papa.parse(texts[0], { header: true, skipEmptyLines: true }).data as any[];
-                const parsed1 = Papa.parse(headerLine + "\n" + texts[1], { header: true, skipEmptyLines: true }).data as any[];
-                const parsed2 = Papa.parse(headerLine + "\n" + texts[2], { header: true, skipEmptyLines: true }).data as any[];
-
-                // 개별 파싱된 객체 배열들을 가볍게 병합
-                const combinedParsedFee = [...parsed0, ...parsed1, ...parsed2];
-
-                // 5자리 순수 코드 필터링
-                const masterFees: FeeRecord[] = combinedParsedFee.map(item => {
-                    const code = item['수가코드']?.trim() || '';
-                    return {
-                        출처: '심평원 수가마스터 원본',
-                        분류번호: item['분류번호']?.trim() || '',
-                        코드: code,
-                        분류: item['한글명']?.trim() || '',
-                        점수: item['상대가치점수'] ? `${item['상대가치점수']}점 (의원단가: ${item['의원단가'] || '0'}원)` : '',
-                        재료대: ''
-                    };
-                }).filter(item => item.코드 !== '' && item.코드.length === 5);
-
-                setFeeData(masterFees);
-                setStatusMsg(`✅ 심평원 마스터 연동 완료: 순수 기본 수가표 ${masterFees.length}건 탑재됨.`);
+                // 최종 완료 처리
+                setFeeData(allValidFees);
                 setIsLoading(false);
 
             } catch (error: any) {
                 console.error("데이터 로딩 오류:", error);
-                setStatusMsg(`❌ 데이터 로딩 실패. 네트워크 상태나 파일을 확인하십시오.`);
+                setProgressLogs(prev => [...prev, `❌ 데이터 로딩 실패: 네트워크나 파일 상태를 확인하십시오.`]);
                 setIsLoading(false);
             }
         };
 
-        // setTimeout을 통해 렌더링 후 비동기로 실행되게 하여 화면 멈춤 방지
+        // UI가 먼저 렌더링될 수 있도록 약간의 숨통을 트여줌
         setTimeout(() => {
             loadAllData();
         }, 100);
@@ -112,7 +134,7 @@ const App: React.FC = () => {
             return;
         }
         if (isLoading) {
-            alert("데이터베이스 로딩 중입니다.");
+            alert("데이터베이스가 아직 로딩 중입니다. 잠시만 기다려주십시오.");
             return;
         }
 
@@ -233,23 +255,36 @@ const App: React.FC = () => {
                         <li className="pl-1">다중 검색어(띄어쓰기 및 콤마)를 지원합니다.</li>
                         <li className="pl-1">결과는 복사 및 인쇄 가능합니다.</li>
                     </ol>
-                    <div className={`mt-4 pt-4 border-t border-blue-200 text-sm font-bold ${isLoading ? 'text-red-500' : 'text-green-600'}`}>
-                        {statusMsg}
+
+                    {/* [변경점] 진행 상황 실시간 출력 UI */}
+                    <div className="mt-4 pt-4 border-t border-blue-200 text-sm font-bold text-blue-700 bg-white p-4 rounded-sm shadow-sm">
+                        {progressLogs.map((log, idx) => (
+                            <div key={idx} className={`mb-1.5 ${log.includes('완료') ? 'text-green-600' : log.includes('실패') ? 'text-red-500' : 'text-blue-600 animate-pulse'}`}>
+                                {log}
+                            </div>
+                        ))}
+                        {!isLoading && feeData.length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-gray-200 text-indigo-700 text-base">
+                                🎉 <strong>최종 탑재 완료: 총 {feeData.length}건.</strong> 이제 검색이 가능합니다.
+                            </div>
+                        )}
                     </div>
                 </div>
 
                 <div className="w-full max-w-4xl flex h-[60px] mb-10 shadow-md">
                     <input
                         type="text"
-                        className="flex-1 bg-white border-2 border-[#4a78d2] border-r-0 p-4 text-xl outline-none rounded-l-sm"
-                        placeholder="마스터 데이터 검색 (예: 창상, 변연절제)"
+                        className={`flex-1 bg-white border-2 border-[#4a78d2] border-r-0 p-4 text-xl outline-none rounded-l-sm ${isLoading ? 'bg-gray-100' : ''}`}
+                        placeholder={isLoading ? "데이터 로딩을 기다려 주십시오..." : "마스터 데이터 검색 (예: 창상, 변연절제)"}
                         value={keyword}
                         onChange={(e) => setKeyword(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                        disabled={isLoading}
                     />
                     <button
-                        className="bg-black hover:bg-gray-800 text-white font-bold px-10 text-xl rounded-r-sm transition-colors"
+                        className={`font-bold px-10 text-xl rounded-r-sm transition-colors ${isLoading ? 'bg-gray-400 cursor-not-allowed text-gray-200' : 'bg-black hover:bg-gray-800 text-white'}`}
                         onClick={handleSearch}
+                        disabled={isLoading}
                     >
                         검색
                     </button>
